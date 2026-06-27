@@ -41,3 +41,17 @@ export const directorModel = new ChatOpenAI({
     chat_template_kwargs: { enable_thinking: true },
   },
 });
+
+/**
+ * Mid-weight model for structured analysis tasks: relationship score
+ * updates, scene summarization. More tokens than dialogueModel (since
+ * structured JSON output with multiple entries needs room), but still
+ * fast/cheap compared to directorModel's reasoning mode.
+ */
+export const analysisModel = new ChatOpenAI({
+  ...baseConfig,
+  model: "meta/llama-3.1-8b-instruct",
+  temperature: 0.3, // lower - we want consistent, sober analysis, not creative variation
+  topP: 0.7,
+  maxTokens: 1024,
+});

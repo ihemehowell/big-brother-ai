@@ -1,6 +1,11 @@
 import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
 import { generateLine } from "./dialogue.js";
 import type { MockContestant, SceneLogEntry, CurrentScene, DialogueLogEntry } from "./types.js";
+import { analyzeSceneForRelationshipChanges } from "./relationshipUpdate.js";
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 const LOCATIONS = ["kitchen", "living_room", "backyard", "bedroom"];
 
@@ -253,6 +258,78 @@ function triggerDiaryRoom(state: State): Partial<State> {
   };
 }
 
+async function applyRelationshipUpdates(state: State): Promise<Partial<State>> {
+  const lastEntry = state.log[state.log.length - 1];
+  if (!lastEntry || lastEntry.sceneEvent !== "scene_end") return {};
+  if (lastEntry.participantIds.length < 2) return {};
+
+  const sceneDialogue = state.dialogueLog
+    .filter((d) => d.sceneId === lastEntry.sceneId)
+    .map((d) => ({ contestantId: d.contestantId, name: d.name, line: d.line }));
+
+  if (sceneDialogue.length === 0) return {};
+
+  const pseudoScene = {
+    id: lastEntry.sceneId,
+    location: "",
+    participantIds: lastEntry.participantIds,
+    ticksElapsed: 0,
+    maxTicks: 0,
+    isDiaryRoom: false,
+    dialogueHistory: sceneDialogue,
+  };
+
+  const rawDeltas = await analyzeSceneForRelationshipChanges(pseudoScene, state.cast);
+  if (rawDeltas.length === 0) return {};
+
+  // Drop any self-targeting deltas defensively, even though the scene-size
+  // guard above should prevent the model from ever needing to produce one.
+  const validDeltas = rawDeltas.filter((d) => d.contestantId !== d.towardContestantId);
+
+  // Consolidate multiple deltas for the same (from, to) pair into one net change,
+  // since a single scene's overall impact on a relationship should be one
+  // coherent shift, not several compounding increments.
+  const consolidated = new Map<string, { contestantId: string; towardContestantId: string; rivalryDelta: number; reasons: string[] }>();
+
+  for (const d of validDeltas) {
+    const key = `${d.contestantId}->${d.towardContestantId}`;
+    const existing = consolidated.get(key);
+    if (existing) {
+      existing.rivalryDelta += d.rivalryDelta;
+      existing.reasons.push(d.reasoning);
+    } else {
+      consolidated.set(key, {
+        contestantId: d.contestantId,
+        towardContestantId: d.towardContestantId,
+        rivalryDelta: d.rivalryDelta,
+        reasons: [d.reasoning],
+      });
+    }
+  }
+
+  if (consolidated.size === 0) return {};
+
+  console.log(`[tick ${state.tick}]   📊 relationship updates from "${lastEntry.sceneId}":`);
+
+  const updatedCast = state.cast.map((c) => {
+    const myDeltas = Array.from(consolidated.values()).filter((d) => d.contestantId === c.id);
+    if (myDeltas.length === 0) return c;
+
+    const newScores = { ...c.rivalryScores };
+    for (const d of myDeltas) {
+      const current = newScores[d.towardContestantId] ?? 0;
+      newScores[d.towardContestantId] = clamp(current + d.rivalryDelta, -100, 100);
+      console.log(
+        `[tick ${state.tick}]     ${c.name} -> ${d.towardContestantId}: rivalry ${current} -> ${newScores[d.towardContestantId]} (${d.reasons.join("; ")})`
+      );
+    }
+
+    return { ...c, rivalryScores: newScores };
+  });
+
+  return { cast: updatedCast };
+}
+
 export function buildDirectorGraph() {
   const graph = new StateGraph(DirectorState)
     .addNode("decideScene", noop)
@@ -260,6 +337,7 @@ export function buildDirectorGraph() {
     .addNode("continueScene", continueScene)
     .addNode("endScene", endScene)
     .addNode("triggerDiaryRoom", triggerDiaryRoom)
+    .addNode("applyRelationshipUpdates", applyRelationshipUpdates)
     .addNode("generateDialogue", generateDialogue)
     .addNode("maybeInjectTwist", maybeInjectTwist)
     .addNode("advanceTick", advanceTick)
@@ -271,7 +349,8 @@ export function buildDirectorGraph() {
     })
     .addEdge("startScene", "generateDialogue")
     .addEdge("continueScene", "generateDialogue")
-    .addEdge("endScene", "triggerDiaryRoom")
+    .addEdge("endScene", "applyRelationshipUpdates")
+    .addEdge("applyRelationshipUpdates", "triggerDiaryRoom")
     .addConditionalEdges(
       "triggerDiaryRoom",
       (state: State) => (state.currentScene?.isDiaryRoom ? "generateDialogue" : "maybeInjectTwist"),

@@ -14,7 +14,8 @@
     "db:studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "director:test": "tsx src/director/run.ts",
-    "test:nvidia": "tsx src/lib/test-nvidia.ts"
+    "test:nvidia": "tsx src/lib/test-nvidia.ts",
+    "test:relationships": "tsx src/director/test-relationship-update.ts"
   },
   "keywords": [],
   "author": "",
