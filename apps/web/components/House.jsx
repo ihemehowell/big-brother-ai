@@ -145,7 +145,7 @@ export default function House() {
         </div>
       </div>
 
-      {/* Sidebar UI */}
+      
       <div className="w-80 bg-gray-900 text-white p-4 flex flex-col">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-bold">Big Brother House</h2>

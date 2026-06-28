@@ -2,145 +2,9 @@ import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
 import { generateLine } from "./dialogue.js";
 import type { MockContestant, SceneLogEntry, CurrentScene, DialogueLogEntry } from "./types.js";
 import { analyzeSceneForRelationshipChanges } from "./relationshipUpdate.js";
-import { db } from "../db/index.js";
-import { episodes, scenes, dialogueLines, diaryEntries, episodeMemories, seasonMemories, relationships, contestants as contestantsTable } from "../db/schema.js";
-import { eq } from "drizzle-orm";
-import { broadcast } from "../ws/server.js";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-async function saveAndBroadcastScene(sceneData: {
-  id: string;
-  episodeId: string;
-  location: string;
-  participantIds: string[];
-  ticksElapsed: number;
-  maxTicks: number;
-  isDiaryRoom: boolean;
-  startedAt: Date;
-}): Promise<any> {
-  try {
-    const [result] = await db.insert(scenes).values(sceneData).returning();
-    await broadcast({
-      type: sceneData.isDiaryRoom ? "diary_room" : "scene_cut",
-      payload: {
-        sceneId: result.id,
-        location: result.location,
-        participantIds: result.participantIds,
-      }
-    });
-    return result;
-  } catch (error) {
-    console.error("Error saving/broadcasting scene:", error);
-    throw error;
-  }
-}
-
-async function saveAndBroadcastDialogue(dialogueData: {
-  sceneId: string;
-  contestantId: string;
-  content: string;
-  createdAt: Date;
-}): Promise<any> {
-  try {
-    const [result] = await db.insert(dialogueLines).values(dialogueData).returning();
-    await broadcast({
-      type: "dialogue",
-      payload: {
-        contestantId: dialogueData.contestantId,
-        sceneId: dialogueData.sceneId,
-        content: dialogueData.content,
-      }
-    });
-    return result;
-  } catch (error) {
-    console.error("Error saving/broadcasting dialogue:", error);
-    throw error;
-  }
-}
-
-async function saveAndBroadcastDiaryEntry(diaryData: {
-  sceneId: string;
-  contestantId: string;
-  content: string;
-  createdAt: Date;
-  sourceSceneSummary?: string;
-}): Promise<any> {
-  try {
-    const [result] = await db.insert(diaryEntries).values(diaryData).returning();
-    await broadcast({
-      type: "diary_room",
-      payload: {
-        contestantId: diaryData.contestantId,
-        sceneId: diaryData.sceneId,
-        content: diaryData.content,
-        sourceSceneSummary: diaryData.sourceSceneSummary,
-      }
-    });
-    return result;
-  } catch (error) {
-    console.error("Error saving/broadcasting diary entry:", error);
-    throw error;
-  }
-}
-
-async function updateRelationship(relationshipData: {
-  contestantId: string;
-  towardContestantId: string;
-  rivalryDelta: number;
-  reasoning: string[];
-  updatedAt: Date;
-}): Promise<any> {
-  try {
-    // Check if relationship already exists
-    const existing = await db.select().from(relationships)
-      .where(eq(relationships.contestantId, relationshipData.contestantId))
-      .where(eq(relationships.towardContestantId, relationshipData.towardContestantId));
-
-    let result;
-    if (existing.length > 0) {
-      // Update existing relationship
-      const [updated] = await db.update(relationships)
-        .set({
-          rivalryScore: db.sql`${relationships.rivalryScore} + ${relationshipData.rivalryDelta}`,
-          lastInteraction: db.sql`${relationshipData.reasoning.join("; ")}`,
-          updatedAt: relationshipData.updatedAt
-        })
-        .where(eq(relationships.contestantId, relationshipData.contestantId))
-        .where(eq(relationships.towardContestantId, relationshipData.towardContestantId))
-        .returning();
-      result = updated;
-    } else {
-      // Create new relationship
-      const [created] = await db.insert(relationships).values({
-        id: crypto.randomUUID(),
-        contestantId: relationshipData.contestantId,
-        towardContestantId: relationshipData.towardContestantId,
-        rivalryScore: relationshipData.rivalryDelta,
-        lastInteraction: relationshipData.reasoning.join("; "),
-        updatedAt: relationshipData.updatedAt
-      }).returning();
-      result = created;
-    }
-
-    // Broadcast relationship update
-    await broadcast({
-      type: "relationship_update",
-      payload: {
-        contestantId: relationshipData.contestantId,
-        towardContestantId: relationshipData.towardContestantId,
-        rivalryDelta: relationshipData.rivalryDelta,
-        reasoning: relationshipData.reasoning
-      }
-    });
-
-    return result;
-  } catch (error) {
-    console.error("Error updating/broadcasting relationship:", error);
-    throw error;
-  }
 }
 
 const LOCATIONS = ["kitchen", "living_room", "backyard", "bedroom"];
@@ -186,7 +50,7 @@ function scoreTension(c: MockContestant, tick: number) {
   return silenceScore + normalizedRivalry + jitter;
 }
 
-async function startScene(state: State): Promise<Partial<State>> {
+function startScene(state: State): Partial<State> {
   const { cast, tick, sceneCounter } = state;
 
   const scored = cast.map((c) => ({ contestant: c, tension: scoreTension(c, tick) }));
@@ -197,33 +61,19 @@ async function startScene(state: State): Promise<Partial<State>> {
   const location = LOCATIONS[Math.floor(Math.random() * LOCATIONS.length)];
   const sceneId = `scene-${sceneCounter + 1}`;
   const sceneMaxTicks = Math.min(4, Math.max(2, Math.ceil(Math.random() * 4)));
-  const now = new Date();
 
   console.log(
-    `
-[tick ${tick}] 🎬 SCENE START "${sceneId}" @ ${location}: ${picked.map((p) => p.name).join(", ")} (planned length: ${sceneMaxTicks} ticks)`
+    `\n[tick ${tick}] 🎬 SCENE START "${sceneId}" @ ${location}: ${picked.map((p) => p.name).join(", ")} (planned length: ${sceneMaxTicks} ticks)`
   );
 
   const updatedCast = cast.map((c) =>
     picked.some((p) => p.id === c.id) ? { ...c, lastSpokeAtTick: tick } : c
   );
 
-  // Save scene to database and broadcast
-  await saveAndBroadcastScene({
-    id: sceneId,
-    episodeId: state.currentEpisodeId || "default-episode",
-    location,
-    participantIds: picked.map((p) => p.id),
-    ticksElapsed: 1,
-    maxTicks: sceneMaxTicks,
-    isDiaryRoom: false,
-    startedAt: now,
-  });
-
   return {
     cast: updatedCast,
     sceneCounter: sceneCounter + 1,
-    currentScene: {
+  currentScene: {
       id: sceneId,
       location,
       participantIds: picked.map((p) => p.id),
@@ -244,6 +94,7 @@ async function startScene(state: State): Promise<Partial<State>> {
     ],
   };
 }
+
 function continueScene(state: State): Partial<State> {
   const { cast, tick, currentScene } = state;
   if (!currentScene) {
