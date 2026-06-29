@@ -4,7 +4,7 @@ import type { MockContestant, SceneLogEntry, CurrentScene, DialogueLogEntry } fr
 import { analyzeSceneForRelationshipChanges } from "./relationshipUpdate.js";
 import { db } from "../db/index.js";
 import { episodes, scenes, dialogueLines, diaryEntries, episodeMemories, seasonMemories, relationships, contestants as contestantsTable } from "../db/schema.js";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { broadcast } from "../ws/server.js";
 
 function clamp(value: number, min: number, max: number): number {
@@ -24,7 +24,7 @@ async function saveAndBroadcastScene(sceneData: {
   try {
     const [result] = await db.insert(scenes).values(sceneData).returning();
     await broadcast({
-      type: sceneData.isDiaryRoom ? "diary_room" : "scene_cut",
+      type: "scene_cut",
       payload: {
         sceneId: result.id,
         location: result.location,
@@ -63,6 +63,7 @@ async function saveAndBroadcastDialogue(dialogueData: {
 
 async function saveAndBroadcastDiaryEntry(diaryData: {
   sceneId: string;
+  episodeId: string;
   contestantId: string;
   content: string;
   createdAt: Date;
@@ -96,20 +97,23 @@ async function updateRelationship(relationshipData: {
   try {
     // Check if relationship already exists
     const existing = await db.select().from(relationships)
-      .where(eq(relationships.contestantId, relationshipData.contestantId))
-      .where(eq(relationships.towardContestantId, relationshipData.towardContestantId));
+      .where(and(
+        eq(relationships.contestantId, relationshipData.contestantId),
+        eq(relationships.towardContestantId, relationshipData.towardContestantId)
+      ));
 
     let result;
     if (existing.length > 0) {
       // Update existing relationship
       const [updated] = await db.update(relationships)
         .set({
-          rivalryScore: db.sql`${relationships.rivalryScore} + ${relationshipData.rivalryDelta}`,
-          lastInteraction: db.sql`${relationshipData.reasoning.join("; ")}`,
+          rivalry: sql`${relationships.rivalry} + ${relationshipData.rivalryDelta}`,
           updatedAt: relationshipData.updatedAt
         })
-        .where(eq(relationships.contestantId, relationshipData.contestantId))
-        .where(eq(relationships.towardContestantId, relationshipData.towardContestantId))
+        .where(and(
+          eq(relationships.contestantId, relationshipData.contestantId),
+          eq(relationships.towardContestantId, relationshipData.towardContestantId)
+        ))
         .returning();
       result = updated;
     } else {
@@ -118,8 +122,7 @@ async function updateRelationship(relationshipData: {
         id: crypto.randomUUID(),
         contestantId: relationshipData.contestantId,
         towardContestantId: relationshipData.towardContestantId,
-        rivalryScore: relationshipData.rivalryDelta,
-        lastInteraction: relationshipData.reasoning.join("; "),
+        rivalry: relationshipData.rivalryDelta,
         updatedAt: relationshipData.updatedAt
       }).returning();
       result = created;
@@ -161,6 +164,10 @@ const DirectorState = Annotation.Root({
   currentScene: Annotation<CurrentScene | null>({
     reducer: (_left, right) => right,
     default: () => null,
+  }),
+  currentEpisodeId: Annotation<string>({
+    reducer: (_left, right) => right,
+    default: () => "default-episode",
   }),
   sceneCounter: Annotation<number>({
     reducer: (_left, right) => right,

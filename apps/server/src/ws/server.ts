@@ -6,7 +6,8 @@ export type WorldStateMessage =
   | { type: "agent_animation"; payload: { contestantId: string; animation: "idle" | "walking" | "talking" | "flirting" } }
   | { type: "dialogue"; payload: { contestantId: string; sceneId: string; content: string } }
   | { type: "scene_cut"; payload: { sceneId: string; location: string; participantIds: string[] } }
-  | { type: "diary_room"; payload: { contestantId: string; content: string } };
+  | { type: "diary_room"; payload: { contestantId: string; sceneId: string; content: string; sourceSceneSummary?: string } }
+  | { type: "relationship_update"; payload: { contestantId: string; towardContestantId: string; rivalryDelta: number; reasoning: string[] } };
 
 let wss: WebSocketServer | null = null;
 
