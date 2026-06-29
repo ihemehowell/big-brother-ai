@@ -5,6 +5,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { ROOMS, WALL_HEIGHT, WALL_THICKNESS, getOuterWalls } from './roomLayout';
 
+
 // ---- Material palette: warm "reality-TV set" rather than flat brown-everywhere ----
 const PALETTE = {
   wallWarm: '#c9a876',      // clay/taupe interior walls
@@ -276,7 +277,7 @@ function HouseShell() {
   );
 }
 
-export default function House({ timeOfDay = 'day', occupants = {}, children }) {
+export default function House({ timeOfDay = 'day', occupants = {}, children = null }) {
   const isDiaryOccupied = (occupants.diary_room || []).length > 0;
 
   const getLighting = (time) => {
