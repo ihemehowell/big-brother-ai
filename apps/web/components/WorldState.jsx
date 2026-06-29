@@ -1,78 +1,99 @@
-"use client";
+'use client';
 
-import { useEffect } from 'react';
-import * as THREE from 'three';
+import { useState, useEffect, useMemo } from 'react';
 import { useWebSocket } from '@/lib/useWebSocket';
+import House from './House';
+import Avatar from './Avatar';
+import { getPositionForRoom } from './roomLayout';
 
-const roomPositions = {
-  kitchen: { x: -3, y: 0.5, z: 3 },
-  living_room: { x: 0, y: 0.5, z: 3 },
-  bedroom: { x: 3, y: 0.5, z: 3 },
-  backyard: { x: 0, y: 0.5, z: -5 },
-  diary_room: { x: 0, y: 2, z: 0 }
-};
+// Cycle through day -> evening -> night to match House's lighting moods.
+// (This was previously a fake simulation living inside House.jsx; it's a
+// presentation-only concern, so it lives at this level, separate from the
+// real contestant/game data coming over the socket.)
+const TIME_CYCLE_MS = 180000; // 3 minutes
 
 const WorldState = () => {
   const { contestants, isConnected } = useWebSocket();
+  const [timeOfDay, setTimeOfDay] = useState('day');
+  const [speakingId, setSpeakingId] = useState(null);
 
   useEffect(() => {
-    console.log('Contestants data:', contestants);
-    console.log('Connection status:', isConnected);
-  }, [contestants, isConnected]);
+    const times = ['day', 'evening', 'night'];
+    const interval = setInterval(() => {
+      setTimeOfDay(prev => times[(times.indexOf(prev) + 1) % times.length]);
+    }, TIME_CYCLE_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Track who's currently talking so we can show one speech bubble at a
+  // time per dialogue event, rather than relying on contestant.animation
+  // alone (a contestant object might not always set it).
+  useEffect(() => {
+    const talker = Object.values(contestants).find(c => c.dialogue);
+    if (talker) {
+      setSpeakingId(talker.id);
+      const timeout = setTimeout(() => setSpeakingId(null), 4000);
+      return () => clearTimeout(timeout);
+    }
+  }, [contestants]);
+
+  // Resolve each contestant's 3D position from their room assignment.
+  // This is the bridge between the WebSocket's room-key data model and
+  // the actual coordinates House.jsx renders geometry at.
+  const placedContestants = useMemo(() => {
+    return Object.values(contestants).map(contestant => {
+      const room = contestant.room || contestant.location || 'living_room';
+      const pos = getPositionForRoom(room, contestant.id);
+      return {
+        ...contestant,
+        position: pos,
+      };
+    });
+  }, [contestants]);
+
+  // Group occupants by room so House can react to occupancy
+  // (currently used for the diary room glow).
+  const occupants = useMemo(() => {
+    const grouped = {};
+    Object.values(contestants).forEach(c => {
+      const room = c.room || c.location || 'living_room';
+      if (!grouped[room]) grouped[room] = [];
+      grouped[room].push(c.id);
+    });
+    return grouped;
+  }, [contestants]);
 
   return (
-    <div>
-      <div style={{ 
-        position: 'fixed', 
-        top: 20, 
-        left: 20, 
-        background: 'rgba(0,0,0,0.7)', 
-        color: 'white', 
-        padding: '10px', 
-        borderRadius: '5px',
-        fontFamily: 'monospace',
-        fontSize: '14px'
-      }}>
-        <div>WebSocket Status: {isConnected ? 'Connected' : 'Disconnected'}</div>
-        <div>Contestants: {Object.keys(contestants).length}</div>
-        {Object.values(contestants).map((contestant, index) => (
-          <div key={contestant.id}>
-            {contestant.name}: {contestant.dialogue || '({contestant.animation})'}
-          </div>
-        ))}
-      </div>
-      
-      {/* 3D visualization container */}
-      <div style={{ 
-        position: 'absolute', 
-        top: 0, 
-        left: 0, 
-        width: '100%', 
-        height: '100%',
-        pointerEvents: 'none'
-      }}>
-        {/* This is where we would render 3D avatars using React Three Fiber */}
-        <div id="avatars-container" style={{
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div
+        style={{
           position: 'absolute',
-          top: '50%',
-          left: '50%',
-          width: '400px',
-          height: '300px',
-          marginTop: '-150px',
-          marginLeft: '-200px',
-          background: 'rgba(0,0,0,0.3)',
-          border: '1px solid #333',
-          borderRadius: '5px',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          color: 'white',
+          top: 16,
+          left: 16,
+          zIndex: 10,
+          background: 'rgba(20,16,12,0.72)',
+          color: '#f2ede3',
+          padding: '10px 14px',
+          borderRadius: 8,
           fontFamily: 'monospace',
-          pointerEvents: 'all'
-        }}>
-          Avatar Positions Will Appear Here
-        </div>
+          fontSize: 13,
+          lineHeight: 1.5,
+          pointerEvents: 'none',
+        }}
+      >
+        <div>{isConnected ? '● connected' : '○ disconnected'} · {timeOfDay}</div>
+        <div>{Object.keys(contestants).length} contestants</div>
       </div>
+
+      <House timeOfDay={timeOfDay} occupants={occupants}>
+        {placedContestants.map(contestant => (
+          <Avatar
+            key={contestant.id}
+            contestant={contestant}
+            isSpeaking={speakingId === contestant.id}
+          />
+        ))}
+      </House>
     </div>
   );
 };

@@ -2,626 +2,340 @@
 
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Text } from '@react-three/drei';
-import { useState, useEffect } from 'react';
+import { OrbitControls } from '@react-three/drei';
+import { ROOMS, WALL_HEIGHT, WALL_THICKNESS, getOuterWalls } from './roomLayout';
 
-// Simplified, more visible avatar component
-function Avatar({ position, color, name, isTalking = false }) {
-  const [bob, setBob] = useState(0);
-  const [pulse, setPulse] = useState(1);
+// ---- Material palette: warm "reality-TV set" rather than flat brown-everywhere ----
+const PALETTE = {
+  wallWarm: '#c9a876',      // clay/taupe interior walls
+  wallExterior: '#9c8462',  // slightly deeper tone for the building shell
+  floorWood: '#a87749',     // honey oak
+  floorTile: '#d8d2c4',     // warm off-white tile
+  floorWalnut: '#3e2a1f',   // dark walnut — signals "different space" (diary room)
+  floorDeck: '#8a6a4a',     // outdoor decking
+  ceiling: '#e8dfd0',
+  trim: '#5c4632',
+  fabricAccent: '#a8554a',  // desaturated terracotta instead of pure red
+  fabricAccent2: '#3f5a52', // muted sage, secondary furniture accent
+};
 
-  // Gentle floating animation
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setBob(Math.sin(Date.now() * 0.0015) * 0.03);
-    }, 50);
-    return () => clearInterval(timer);
-  }, []);
+const FLOOR_COLORS = {
+  wood: PALETTE.floorWood,
+  tile: PALETTE.floorTile,
+  walnut: PALETTE.floorWalnut,
+  deck: PALETTE.floorDeck,
+};
 
-  // Talking pulse effect
-  useEffect(() => {
-    if (isTalking) {
-      const timer = setInterval(() => {
-        setPulse(p => (p === 1 ? 1.15 : 1));
-      }, 200);
-      return () => clearInterval(timer);
-    }
-    setPulse(1);
-  }, [isTalking]);
+function RoomFloor({ room }) {
+  const { center, size, floor, isOutdoor } = room;
+  return (
+    <mesh
+      rotation={[-Math.PI / 2, 0, 0]}
+      position={[center.x, isOutdoor ? -0.02 : 0, center.z]}
+      receiveShadow
+    >
+      <planeGeometry args={[size.width, size.depth]} />
+      <meshStandardMaterial
+        color={FLOOR_COLORS[floor] || PALETTE.floorWood}
+        roughness={isOutdoor ? 0.95 : 0.75}
+        metalness={0}
+      />
+    </mesh>
+  );
+}
+
+// A single wall segment along X or Z axis.
+function Wall({ x, z, length, axis = 'x', height = WALL_HEIGHT, color = PALETTE.wallWarm, opacity = 1, y = WALL_HEIGHT / 2 }) {
+  const rotationY = axis === 'x' ? 0 : Math.PI / 2;
+  return (
+    <mesh position={[x, y, z]} rotation={[0, rotationY, 0]} castShadow receiveShadow>
+      <boxGeometry args={[length, height, WALL_THICKNESS]} />
+      <meshStandardMaterial color={color} roughness={0.9} metalness={0} transparent={opacity < 1} opacity={opacity} />
+    </mesh>
+  );
+}
+
+// Glass booth for the diary room — the signature architectural element.
+// Visible from outside, glows warmly at night via an internal point light.
+function DiaryBooth({ room, isOccupied, timeOfDay }) {
+  const { center, size } = room;
+  const halfW = size.width / 2;
+  const halfD = size.depth / 2;
+  const glowIntensity = timeOfDay === 'night' ? (isOccupied ? 1.4 : 0.7) : (isOccupied ? 0.6 : 0.15);
 
   return (
-    <group
-      position={[position[0], position[1] + 0.5 + bob, position[2]]}
-      scale={[pulse, pulse, pulse]}
-    >
-      {/* Drop shadow */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]}>
-        <circleGeometry args={[0.18, 8]} />
-        <meshBasicMaterial color={0x000000} opacity={0.2} transparent />
+    <group>
+      {/* Glass walls — physical material with transmission for a real glass look */}
+      <mesh position={[center.x, WALL_HEIGHT / 2, center.z - halfD]} castShadow>
+        <boxGeometry args={[size.width, WALL_HEIGHT, 0.08]} />
+        <meshPhysicalMaterial color="#cfe8e6" transmission={0.85} roughness={0.05} thickness={0.3} ior={1.3} />
+      </mesh>
+      <mesh position={[center.x - halfW, WALL_HEIGHT / 2, center.z]} rotation={[0, Math.PI / 2, 0]} castShadow>
+        <boxGeometry args={[size.depth, WALL_HEIGHT, 0.08]} />
+        <meshPhysicalMaterial color="#cfe8e6" transmission={0.85} roughness={0.05} thickness={0.3} ior={1.3} />
+      </mesh>
+      <mesh position={[center.x + halfW, WALL_HEIGHT / 2, center.z]} rotation={[0, Math.PI / 2, 0]} castShadow>
+        <boxGeometry args={[size.depth, WALL_HEIGHT, 0.08]} />
+        <meshPhysicalMaterial color="#cfe8e6" transmission={0.85} roughness={0.05} thickness={0.3} ior={1.3} />
       </mesh>
 
-      {/* Body - simple capsule but more visible */}
-      <mesh>
-        <capsuleGeometry args={[0.16, 0.6, 4, 6]} />
-        <meshStandardMaterial color={color} metalness={0.0} roughness={0.9} />
-      </mesh>
-
-      {/* Head - slightly larger for visibility */}
-      <mesh position={[0, 0.4, 0]}>
-        <sphereGeometry args={[0.18, 8, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-
-      {/* Name tag - background plane + drei Text for actual readable text */}
-      <group position={[0, 0.75, 0]}>
-        <mesh>
-          <planeGeometry args={[0.5, 0.15]} />
-          <meshBasicMaterial color={0x000000} opacity={0.4} transparent />
+      {/* Thin window mullions for structure */}
+      {[-1, 0, 1].map(i => (
+        <mesh key={`mullion-${i}`} position={[center.x + i * (size.width / 3), WALL_HEIGHT / 2, center.z - halfD]}>
+          <boxGeometry args={[0.05, WALL_HEIGHT, 0.1]} />
+          <meshStandardMaterial color={PALETTE.trim} />
         </mesh>
-        <Text
-          position={[0, 0, 0.01]}
-          fontSize={0.08}
-          color="white"
-          anchorX="center"
-          anchorY="middle"
-          fontWeight="bold"
-        >
-          {name}
-        </Text>
+      ))}
+
+      {/* Walnut floor, slightly inset */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[center.x, 0.01, center.z]}>
+        <planeGeometry args={[size.width - 0.2, size.depth - 0.2]} />
+        <meshStandardMaterial color={PALETTE.floorWalnut} roughness={0.4} metalness={0.1} />
+      </mesh>
+
+      {/* Diary chair + small desk */}
+      <group position={[center.x, 0, center.z]}>
+        <mesh position={[0, 0.45, 0.6]} castShadow>
+          <boxGeometry args={[0.55, 0.9, 0.55]} />
+          <meshStandardMaterial color={PALETTE.trim} roughness={0.6} />
+        </mesh>
+        <mesh position={[0, 0.85, 0.35]}>
+          <boxGeometry args={[0.5, 0.5, 0.1]} />
+          <meshStandardMaterial color="#2a1f17" roughness={0.5} />
+        </mesh>
       </group>
 
-      {/* Talking indicator - more visible */}
-      {isTalking && (
-        <mesh position={[0, 0.5, 0.25]}>
-          <sphereGeometry args={[0.09, 6, 6]} />
-          <meshStandardMaterial
-            color="#ff4444"
-            emissive={0xffffff}
-            emissiveIntensity={0.5}
-          />
+      {/* The glow — this is what makes the booth read as "lit from within"
+          across the whole house, especially at night */}
+      <pointLight
+        position={[center.x, 2.2, center.z]}
+        color="#ffd9a0"
+        intensity={glowIntensity}
+        distance={9}
+        decay={2}
+      />
+      {isOccupied && (
+        <mesh position={[center.x, 3.5, center.z + halfD - 0.3]}>
+          <sphereGeometry args={[0.06, 8, 8]} />
+          <meshStandardMaterial color="#ff3333" emissive="#ff0000" emissiveIntensity={1} />
         </mesh>
       )}
     </group>
   );
 }
 
-export default function House() {
-  const [timeOfDay, setTimeOfDay] = useState('day');
-  const [avatars, setAvatars] = useState([]);
-  const [roomState, setRoomState] = useState({
-    livingRoom: ['Alex', 'Sam'],
-    kitchen: ['Jamie', 'Taylor'],
-    bedroom: ['Casey', 'Morgan'],
-    bathroom: [],
-    diaryRoom: [],
-    yard: []
-  });
+function Furniture() {
+  return (
+    <group>
+      {/* Living room — sofa */}
+      <group position={[3, 0, 1]}>
+        <mesh position={[0, 0.35, 0]} castShadow>
+          <boxGeometry args={[3.2, 0.7, 1.4]} />
+          <meshStandardMaterial color={PALETTE.fabricAccent} roughness={0.85} />
+        </mesh>
+        <mesh position={[0, 0.85, -0.55]} castShadow>
+          <boxGeometry args={[3.2, 0.6, 0.25]} />
+          <meshStandardMaterial color={PALETTE.fabricAccent} roughness={0.85} />
+        </mesh>
+      </group>
+      {/* Coffee table */}
+      <mesh position={[3, 0.22, 2.4]} castShadow>
+        <boxGeometry args={[1.4, 0.08, 0.8]} />
+        <meshStandardMaterial color={PALETTE.trim} roughness={0.5} />
+      </mesh>
+      <mesh position={[3, 0.1, 2.4]}>
+        <cylinderGeometry args={[0.06, 0.06, 0.2, 8]} />
+        <meshStandardMaterial color={PALETTE.trim} />
+      </mesh>
 
-  // Simulate time of day changes and occasional room changes
-  useEffect(() => {
-    // Time of day cycle (slower for better viewing)
-    const timeInterval = setInterval(() => {
-      setTimeOfDay(prev => {
-        const times = ['day', 'evening', 'night'];
-        const currentIndex = times.indexOf(prev);
-        const nextIndex = (currentIndex + 1) % times.length;
-        return times[nextIndex];
-      });
-    }, 180000); // 3 minutes
+      {/* TV unit */}
+      <mesh position={[7.7, 1.2, 0]} castShadow>
+        <boxGeometry args={[0.1, 1.4, 2.4]} />
+        <meshStandardMaterial color="#1a1a1a" roughness={0.3} />
+      </mesh>
 
-    // Occasionally shuffle people between rooms
-    const roomInterval = setInterval(() => {
-      if (Math.random() > 0.7) { // 30% chance to shuffle
-        const allPeople = ['Alex', 'Sam', 'Jamie', 'Taylor', 'Casey', 'Morgan'];
-        const rooms = ['livingRoom', 'kitchen', 'bedroom', 'bathroom', 'diaryRoom', 'yard'];
+      {/* Kitchen counter (L-shape, two segments) */}
+      <mesh position={[-2, 0.45, -2]} castShadow>
+        <boxGeometry args={[5.5, 0.9, 0.6]} />
+        <meshStandardMaterial color="#e8e2d6" roughness={0.4} />
+      </mesh>
+      <mesh position={[-2, 0.92, -2]}>
+        <boxGeometry args={[5.5, 0.04, 0.65]} />
+        <meshStandardMaterial color={PALETTE.trim} roughness={0.3} />
+      </mesh>
+      <mesh position={[-6, 0.45, 0]} rotation={[0, Math.PI / 2, 0]} castShadow>
+        <boxGeometry args={[4, 0.9, 0.6]} />
+        <meshStandardMaterial color="#e8e2d6" roughness={0.4} />
+      </mesh>
 
-        // Clear all rooms
-        const newState = {};
-        rooms.forEach(room => {
-          newState[room] = [];
-        });
+      {/* Dining table + 4 chairs */}
+      <mesh position={[-2.5, 0.5, 1.8]} castShadow>
+        <boxGeometry args={[2.2, 0.06, 1.3]} />
+        <meshStandardMaterial color={PALETTE.floorWood} roughness={0.4} />
+      </mesh>
+      <mesh position={[-2.5, 0.25, 1.8]}>
+        <cylinderGeometry args={[0.06, 0.06, 0.5, 8]} />
+        <meshStandardMaterial color={PALETTE.trim} />
+      </mesh>
+      {[[-1.1, 1.2], [-3.9, 1.2], [-1.1, 2.4], [-3.9, 2.4]].map(([x, z], i) => (
+        <mesh key={`diningchair-${i}`} position={[x, 0.25, z]} castShadow>
+          <boxGeometry args={[0.4, 0.5, 0.4]} />
+          <meshStandardMaterial color={PALETTE.fabricAccent2} roughness={0.8} />
+        </mesh>
+      ))}
 
-        // Distribute people randomly
-        allPeople.forEach(person => {
-          const randomRoom = rooms[Math.floor(Math.random() * rooms.length)];
-          newState[randomRoom].push(person);
-        });
+      {/* Bedroom — two beds */}
+      {[-7, -3].map((x, i) => (
+        <group key={`bed-${i}`} position={[x, 0, -6]}>
+          <mesh position={[0, 0.25, 0]} castShadow>
+            <boxGeometry args={[1.6, 0.3, 2.2]} />
+            <meshStandardMaterial color={PALETTE.trim} roughness={0.6} />
+          </mesh>
+          <mesh position={[0, 0.42, 0]}>
+            <boxGeometry args={[1.5, 0.18, 2.1]} />
+            <meshStandardMaterial color="#f2ede3" roughness={0.9} />
+          </mesh>
+          <mesh position={[0, 0.55, -0.85]}>
+            <boxGeometry args={[1.3, 0.15, 0.45]} />
+            <meshStandardMaterial color={i === 0 ? PALETTE.fabricAccent : PALETTE.fabricAccent2} roughness={0.85} />
+          </mesh>
+        </group>
+      ))}
 
-        setRoomState(newState);
-      }
-    }, 10000); // Every 10 seconds
+      {/* Bathroom fixtures */}
+      <mesh position={[0.5, 0.4, -6]} castShadow>
+        <cylinderGeometry args={[0.22, 0.28, 0.6, 12]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.3} />
+      </mesh>
+      <mesh position={[-0.8, 0.45, -7]} castShadow>
+        <boxGeometry args={[0.7, 0.1, 0.5]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.2} />
+      </mesh>
+      <mesh position={[-0.8, 1.1, -7.4]}>
+        <planeGeometry args={[0.6, 0.7]} />
+        <meshStandardMaterial color="#dfeaea" metalness={0.6} roughness={0.15} />
+      </mesh>
 
-    return () => {
-      clearInterval(timeInterval);
-      clearInterval(roomInterval);
-    };
-  }, []);
+      {/* Backyard — patio table + a couple of loungers */}
+      <mesh position={[0, 0.4, 6]} castShadow>
+        <cylinderGeometry args={[0.7, 0.7, 0.06, 16]} />
+        <meshStandardMaterial color={PALETTE.trim} roughness={0.5} />
+      </mesh>
+      <mesh position={[0, 0.2, 6]}>
+        <cylinderGeometry args={[0.05, 0.05, 0.4, 8]} />
+        <meshStandardMaterial color="#333333" />
+      </mesh>
+      {[-5, 5].map((x, i) => (
+        <mesh key={`lounger-${i}`} position={[x, 0.18, 7]} rotation={[0, i === 0 ? 0.1 : -0.1, 0]} castShadow>
+          <boxGeometry args={[0.6, 0.15, 1.8]} />
+          <meshStandardMaterial color={PALETTE.fabricAccent2} roughness={0.8} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
 
-  // Update avatar positions based on room state
-  useEffect(() => {
-    const avatarUpdateInterval = setInterval(() => {
-      const roomPositions = {
-        livingRoom: [{ x: -3, z: 2 }, { x: 3, z: 2 }],
-        kitchen: [{ x: 4, z: -2 }, { x: 4, z: 2 }],
-        bedroom: [{ x: -2, z: -3 }, { x: 2, z: -3 }],
-        bathroom: [{ x: 5, z: 3 }],
-        diaryRoom: [{ x: -4, z: 3 }],
-        yard: [{ x: -4, z: -4 }, { x: 4, z: -4 }]
-      };
+// Builds the exterior shell + interior partition walls from ROOMS config.
+// Doors are simply gaps left in the partition walls (no geometry needed there).
+function HouseShell() {
+  const { minX, maxX, minZ, maxZ } = getOuterWalls();
+  const shellWidth = maxX - minX;
+  const shellDepth = maxZ - minZ;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
 
-      const colors = {
-        Alex: '#3b82f6',
-        Sam: '#10b981',
-        Jamie: '#f59e0b',
-        Taylor: '#8b5cf6',
-        Casey: '#ec4899',
-        Morgan: '#14b8a6'
-      };
+  return (
+    <group>
+      {/* Floors per room */}
+      {Object.entries(ROOMS).map(([key, room]) =>
+        room.isGlassBooth ? null : <RoomFloor key={key} room={room} />
+      )}
 
-      const newAvatars = [];
-      Object.entries(roomState).forEach(([room, people]) => {
-        people.forEach((person, index) => {
-          const positions = roomPositions[room] || [{ x: 0, z: 0 }];
-          const pos = positions[index] || positions[0];
-          newAvatars.push({
-            id: person.toLowerCase(),
-            position: [pos.x, 0, pos.z],
-            color: colors[person] || '#888888',
-            name: person,
-            talking: Math.random() > 0.8
-          });
-        });
-      });
+      {/* Ceiling (skip over the glass booth + outdoor area so light can reach them) */}
+      <mesh position={[cx - 2, WALL_HEIGHT, cz - 5.5]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[shellWidth - 5, 10]} />
+        <meshStandardMaterial color={PALETTE.ceiling} roughness={0.95} />
+      </mesh>
 
-      setAvatars(newAvatars);
-    }, 2000);
+      {/* Exterior shell walls (skip the back/yard-facing side so the yard reads as open-air) */}
+      <Wall x={cx} z={minZ - 5} length={shellWidth - 5} axis="x" color={PALETTE.wallExterior} />
+      <Wall x={minX} z={cz - 5.5} length={shellDepth - 5} axis="z" color={PALETTE.wallExterior} />
+      <Wall x={maxX - 5} z={cz - 5.5} length={shellDepth - 5} axis="z" color={PALETTE.wallExterior} />
 
-    return () => clearInterval(avatarUpdateInterval);
-  }, [roomState]);
+      {/* Interior partitions, with door gaps left as intentional breaks */}
+      {/* Bedroom / Bathroom divider */}
+      <Wall x={-2} z={-7.4} length={5} axis="z" color={PALETTE.wallWarm} />
+      {/* Bathroom / Diary booth divider (solid, since booth's own glass starts here) */}
+      <Wall x={2} z={-6.5} length={3} axis="z" color={PALETTE.wallWarm} />
+      {/* Bedroom+Bathroom block / Kitchen+Living divider, with a doorway gap left open */}
+      <Wall x={-6.5} z={-2.5} length={5} axis="x" color={PALETTE.wallWarm} />
+      <Wall x={2.5} z={-2.5} length={4} axis="x" color={PALETTE.wallWarm} />
+      {/* Kitchen / Living room soft divider (half-wall, like a breakfast bar) */}
+      <Wall x={0.5} z={0} length={5} axis="z" height={1.1} y={0.55} color={PALETTE.trim} />
+    </group>
+  );
+}
 
-  // Lighting configuration for different times of day
+export default function House({ timeOfDay = 'day', occupants = {}, children }) {
+  const isDiaryOccupied = (occupants.diary_room || []).length > 0;
+
   const getLighting = (time) => {
     switch (time) {
       case 'day':
-        return {
-          ambient: 0.85,
-          directional: { intensity: 0.85, color: '#fff8ec' },
-          fog: { color: '#bfd9ec', near: 10, far: 25 }
-        };
+        return { ambient: 0.55, directional: { intensity: 1.0, color: '#fff3e0' }, fog: { color: '#cfe0ea', near: 14, far: 32 } };
       case 'evening':
-        return {
-          ambient: 0.4,
-          directional: { intensity: 0.6, color: '#ffaa88' },
-          fog: { color: '#e08a5e', near: 12, far: 28 }
-        };
+        return { ambient: 0.32, directional: { intensity: 0.55, color: '#ffab73' }, fog: { color: '#caa07a', near: 13, far: 28 } };
       case 'night':
-        return {
-          ambient: 0.2,
-          directional: { intensity: 0.2, color: '#4444aa' },
-          fog: { color: '#101030', near: 15, far: 30 }
-        };
+        return { ambient: 0.14, directional: { intensity: 0.12, color: '#5566aa' }, fog: { color: '#0d0f22', near: 12, far: 26 } };
       default:
-        return {
-          ambient: 0.5,
-          directional: { intensity: 0.8, color: '#ffffff' },
-          fog: { color: '#ffffff', near: 5, far: 50 }
-        };
+        return { ambient: 0.5, directional: { intensity: 0.8, color: '#ffffff' }, fog: { color: '#ffffff', near: 10, far: 30 } };
     }
   };
-
   const lighting = getLighting(timeOfDay);
-
-  const skyColors = {
-    day: '#87ceeb',
-    evening: '#ff8c69',
-    night: '#191970'
-  };
-
-  // Dining chair positions: 4 chairs around a 5x3 table centered at (0, 0.6, -1)
-  const chairPositions = [
-    { x: -1.5, z: -2.5 },
-    { x: 1.5, z: -2.5 },
-    { x: -1.5, z: 0.5 },
-    { x: 1.5, z: 0.5 }
-  ];
+  const skyColors = { day: '#a8cbe0', evening: '#e0926a', night: '#10122a' };
 
   return (
     <Canvas
-      camera={{
-        position: [10, 12, 12],
-        fov: 28,
-        near: 0.1,
-        far: 100
-      }}
+      camera={{ position: [12, 13, 14], fov: 32, near: 0.1, far: 120 }}
       style={{ height: '100%', width: '100%' }}
       shadows
       gl={{ toneMapping: THREE.ACESFilmicToneMapping }}
     >
-      {/* Sky/background color based on time of day */}
       <color attach="background" args={[skyColors[timeOfDay]]} />
-
-      {/* Ambient light with slight tint for time of day */}
       <ambientLight intensity={lighting.ambient} />
-
-      {/* Main directional light (sun/moon) */}
       <directionalLight
-        position={[8, 15, 8]}
+        position={[10, 16, 6]}
         intensity={lighting.directional.intensity}
         color={lighting.directional.color}
         castShadow
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
-        shadow-camera-top={10}
-        shadow-camera-bottom={-10}
-        shadow-camera-left={-10}
-        shadow-camera-right={10}
+        shadow-camera-top={12}
+        shadow-camera-bottom={-12}
+        shadow-camera-left={-12}
+        shadow-camera-right={12}
       />
+      <pointLight position={[-6, 6, -3]} intensity={0.25} distance={14} decay={2} color="#fff0d8" />
+      <pointLight position={[5, 5, 4]} intensity={0.2} distance={14} decay={2} color="#fff0d8" />
 
-      {/* Fill lights for better illumination */}
-      <pointLight position={[-8, 10, -8]} intensity={0.3} distance={20} decay={2} />
-      <pointLight position={[8, 10, 8]} intensity={0.2} distance={20} decay={2} />
+      <HouseShell />
+      <Furniture />
+      <DiaryBooth room={ROOMS.diary_room} isOccupied={isDiaryOccupied} timeOfDay={timeOfDay} />
 
-      {/* Additional rim light for character separation */}
-      <directionalLight position={[-5, 20, 5]} intensity={0.3} color="#888888" />
+      {children}
 
-      {/* Floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[20, 20]} />
-        <meshStandardMaterial color="#654321" roughness={0.95} metalness={0.0} />
-      </mesh>
-
-      {/* Walls - Proper room structure with solid walls */}
-      <group>
-        {/* Back wall */}
-        <mesh position={[0, 2.5, -9.99]} rotation={[0, Math.PI, 0]}>
-          <planeGeometry args={[18, 8]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.95} metalness={0.0} />
-        </mesh>
-
-        {/* Left wall */}
-        <mesh position={[-8.99, 2.5, 0]} rotation={[0, -Math.PI / 2, 0]}>
-          <planeGeometry args={[18, 8]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.95} metalness={0.0} />
-        </mesh>
-
-        {/* Right wall */}
-        <mesh position={[8.99, 2.5, 0]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[18, 8]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.95} metalness={0.0} />
-        </mesh>
-
-        {/* Front wall (with window area) */}
-        <mesh position={[0, 2.5, 9.99]}>
-          <planeGeometry args={[18, 8]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.95} metalness={0.0} />
-        </mesh>
-
-        {/* Ceiling */}
-        <mesh position={[0, 5, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[18, 18]} />
-          <meshStandardMaterial color="#4a3520" roughness={0.9} metalness={0.0} />
-        </mesh>
-
-        {/* Room dividers - proper walls to create distinct spaces */}
-        {/* Kitchen divider - separates kitchen from living/dining area */}
-        <mesh position={[0, 2.5, -2]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#654321" roughness={0.9} />
-        </mesh>
-
-        {/* Living room divider - separates living room from bedroom area */}
-        <mesh position={[-4, 2.5, 2]} rotation={[0, 0, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#654321" roughness={0.9} />
-        </mesh>
-
-        {/* Bedroom divider - creates private bedroom area */}
-        <mesh position={[3, 2.5, 2]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#654321" roughness={0.9} />
-        </mesh>
-
-        {/* Bathroom walls - enclosed bathroom */}
-        <mesh position={[5, 2.5, -2]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.9} />
-        </mesh>
-        <mesh position={[5, 2.5, 2]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.9} />
-        </mesh>
-        <mesh position={[3, 2.5, 0]} rotation={[0, 0, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.9} />
-        </mesh>
-        <mesh position={[7, 2.5, 0]} rotation={[0, 0, 0]}>
-          <planeGeometry args={[4, 2]} />
-          <meshStandardMaterial color="#8B4513" roughness={0.9} />
-        </mesh>
-
-        {/* Diary Room - private, enclosed space */}
-        <mesh position={[-6, 2.5, 3]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#8b0000" roughness={0.9} />
-        </mesh>
-        <mesh position={[-2, 2.5, 3]} rotation={[0, Math.PI / 2, 0]}>
-          <planeGeometry args={[4, 4]} />
-          <meshStandardMaterial color="#8b0000" roughness={0.9} />
-        </mesh>
-        <mesh position={[-4, 2.5, 1]} rotation={[0, 0, 0]}>
-          <planeGeometry args={[4, 2]} />
-          <meshStandardMaterial color="#8b0000" roughness={0.9} />
-        </mesh>
-        <mesh position={[-4, 2.5, 5]} rotation={[0, 0, 0]}>
-          <planeGeometry args={[4, 2]} />
-          <meshStandardMaterial color="#8b0000" roughness={0.9} />
-        </mesh>
-
-        {/* Diary Room door opening (optional - could add a door frame later) */}
-        {/* Leave open for now to see inside */}
-
-        /*
-           Room Layout Summary:
-           - Living Room: x:-4 to 4, z:-2 to 4
-           - Kitchen: x:-2 to 4, z:-4 to -2
-           - Bedroom: x:2 to 6, z:-4 to -2
-           - Bathroom: x:4 to 8, z:-2 to 2
-           - Diary Room: x:-6 to -2, z:1 to 5
-           - Yard: x:-6 to 6, z:-6 to -4 and x:-6 to 6, z:6 to 8 (L-shaped)
-        */
-      </group>
-
-      {/* Furniture - More detailed and characteristic */}
-      <group>
-        {/* Living Room */}
-        {/* Sofa */}
-        <group position={[-3, 0.6, 2]}>
-          {/* Base */}
-          <mesh>
-            <boxGeometry args={[4, 0.5, 2]} />
-            <meshStandardMaterial color="#8b0000" roughness={0.9} />
-          </mesh>
-          {/* Cushions */}
-          <mesh position={[0, 0.3, 0]}>
-            <boxGeometry args={[3.8, 0.3, 1.8]} />
-            <meshStandardMaterial color="#9b1c1c" roughness={0.8} />
-          </mesh>
-          {/* Back */}
-          <mesh position={[0, 1.0, -0.9]}>
-            <boxGeometry args={[4, 0.8, 0.2]} />
-            <meshStandardMaterial color="#8b0000" roughness={0.9} />
-          </mesh>
-        </group>
-
-        {/* Coffee table */}
-        <mesh position={[-3, 0.3, 2]}>
-          <boxGeometry args={[2.5, 0.2, 1.5]} />
-          <meshStandardMaterial color="#654321" roughness={0.8} />
-        </mesh>
-
-        {/* TV Stand */}
-        <mesh position={[4, 0.3, -4]}>
-          <boxGeometry args={[3, 0.4, 1.5]} />
-          <meshStandardMaterial color="#654321" roughness={0.8} />
-        </mesh>
-        {/* TV Screen */}
-        <mesh position={[4, 0.6, -4.99]}>
-          <boxGeometry args={[2.8, 1.6, 0.1]} />
-          <meshBasicMaterial color="#00ffff" opacity={0.3} transparent />
-        </mesh>
-
-        {/* Kitchen */}
-        {/* Counter */}
-        <mesh position={[-2, 0.6, -4]}>
-          <boxGeometry args={[6, 0.4, 2]} />
-          <meshStandardMaterial color="#696969" roughness={0.8} />
-        </mesh>
-        <mesh position={[-2, 1.0, -4]}>
-          <boxGeometry args={[6, 0.2, 2]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.9} />
-        </mesh>
-
-        {/* Fridge */}
-        <mesh position={[2, 0.6, -4]}>
-          <boxGeometry args={[1.5, 1.2, 0.8]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.9} />
-        </mesh>
-
-        {/* Dining Table */}
-        <mesh position={[0, 0.6, -1]}>
-          <boxGeometry args={[5, 0.4, 3]} />
-          <meshStandardMaterial color="#8b4513" roughness={0.85} />
-        </mesh>
-
-        {/* Dining Chairs - one at each corner of the table */}
-        {chairPositions.map((c, i) => (
-          <group key={`chair-${i}`} position={[c.x, 0.6, c.z]}>
-            <mesh>
-              <boxGeometry args={[0.4, 0.5, 0.4]} />
-              <meshStandardMaterial color="#654321" roughness={0.8} />
-            </mesh>
-            <mesh position={[0, 0.3, 0]}>
-              <boxGeometry args={[0.3, 0.3, 0.3]} />
-              <meshStandardMaterial color="#654321" roughness={0.8} />
-            </mesh>
-          </group>
-        ))}
-
-        {/* Bedroom */}
-        {/* Bed */}
-        <group position={[3, 0.6, 2]}>
-          {/* Frame */}
-          <mesh>
-            <boxGeometry args={[3, 0.3, 2]} />
-            <meshStandardMaterial color="#8b0000" roughness={0.9} />
-          </mesh>
-          {/* Mattress */}
-          <mesh position={[0, 0.2, 0]}>
-            <boxGeometry args={[2.8, 0.2, 1.8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.9} />
-          </mesh>
-          {/* Pillow */}
-          <mesh position={[0, 0.4, -0.8]}>
-            <boxGeometry args={[0.8, 0.2, 0.6]} />
-            <meshStandardMaterial color="#ffffcc" roughness={0.8} />
-          </mesh>
-        </group>
-
-        {/* Nightstand */}
-        <mesh position={[5, 0.6, 2]}>
-          <boxGeometry args={[0.6, 0.4, 0.6]} />
-          <meshStandardMaterial color="#654321" roughness={0.8} />
-        </mesh>
-        <mesh position={[5, 1.0, 2]}>
-          <boxGeometry args={[0.4, 0.4, 0.4]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.9} />
-        </mesh>
-
-        {/* Bathroom */}
-        {/* Toilet */}
-        <group position={[5, 0.6, -2]}>
-          <mesh>
-            <cylinderGeometry args={[0.2, 0.3, 0.8, 8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.3, 0.1]}>
-            <cylinderGeometry args={[0.25, 0.1, 0.8, 8]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.15, 0.3]}>
-            <boxGeometry args={[0.3, 0.3, 0.1]} />
-            <meshStandardMaterial color="#ffffff" roughness={0.9} />
-          </mesh>
-        </group>
-
-        {/* Sink */}
-        <mesh position={[5, 0.6, -3]}>
-          <cylinderGeometry args={[0.25, 0.3, 0.6, 16]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.9} />
-        </mesh>
-        <mesh position={[5, 0.9, -3]}>
-          <boxGeometry args={[0.5, 0.1, 0.3]} />
-          <meshStandardMaterial color="#654321" roughness={0.8} />
-        </mesh>
-
-        {/* Mirror */}
-        <mesh position={[5, 1.2, -3.01]}>
-          <planeGeometry args={[0.6, 0.4]} />
-          <meshStandardMaterial color="#cccccc" metalness={0.8} roughness={0.1} />
-        </mesh>
-
-        {/* Diary Room Furnishings */}
-        <group position={[-4, 0.6, 3]}>
-          {/* Diary Chair */}
-          <mesh>
-            <boxGeometry args={[0.5, 0.8, 0.5]} />
-            <meshStandardMaterial color="#4a3520" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.5, 0]}>
-            <boxGeometry args={[0.4, 0.4, 0.4]} />
-            <meshStandardMaterial color="#654321" roughness={0.8} />
-          </mesh>
-
-          {/* Diary Table/Desk */}
-          <mesh position={[0, 0.6, -0.3]}>
-            <boxGeometry args={[1.0, 0.3, 0.6]} />
-            <meshStandardMaterial color="#654321" roughness={0.8} />
-          </mesh>
-
-          {/* Diary Camera Indicator (red light) */}
-          <mesh position={[0, 1.2, 0.3]}>
-            <sphereGeometry args={[0.05, 6, 6]} />
-            <meshStandardMaterial color="#ff0000" emissive={0xff0000} emissiveIntensity={0.5} />
-          </mesh>
-        </group>
-      </group>
-
-      {/* Decorative elements to make it feel lived-in */}
-      <group>
-        {/* Rug */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-          <planeGeometry args={[3, 2]} />
-          <meshStandardMaterial color="#8b4513" roughness={0.9} />
-        </mesh>
-
-        {/* Picture on wall */}
-        <mesh position={[0, 3.5, 9.991]}>
-          <planeGeometry args={[1.5, 1]} />
-          <meshStandardMaterial color="#654321" roughness={0.9} />
-        </mesh>
-        <mesh position={[0, 3.5, 9.992]}>
-          <planeGeometry args={[1.4, 0.9]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.9} />
-        </mesh>
-
-        {/* Plant in corner */}
-        <group position={[-6, 0.2, -6]}>
-          {/* Pot */}
-          <mesh>
-            <cylinderGeometry args={[0.2, 0.2, 0.3, 8]} />
-            <meshStandardMaterial color="#654321" roughness={0.9} />
-          </mesh>
-          {/* Plant */}
-          <mesh position={[0, 0.2, 0]}>
-            <coneGeometry args={[0.15, 0.3, 8]} />
-            <meshStandardMaterial color="#228b22" roughness={0.9} />
-          </mesh>
-        </group>
-
-        {/* Yard decorations */}
-        <group position={[-4, 0.1, -4]}>
-          {/* Small tree/bush */}
-          <mesh>
-            <coneGeometry args={[0.3, 0.8, 8]} />
-            <meshStandardMaterial color="#228b22" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.4, 0]}>
-            <cylinderGeometry args={[0.1, 0.1, 0.2, 8]} />
-            <meshStandardMaterial color="#654321" roughness={0.9} />
-          </mesh>
-        </group>
-        <group position={[4, 0.1, -4]}>
-          {/* Garden gnome */}
-          <mesh>
-            <sphereGeometry args={[0.15, 8, 8]} />
-            <meshStandardMaterial color="#ffd700" roughness={0.9} />
-          </mesh>
-          <mesh position={[0, 0.2, 0]}>
-            <coneGeometry args={[0.1, 0.3, 8]} />
-            <meshStandardMaterial color="#8b4513" roughness={0.9} />
-          </mesh>
-        </group>
-      </group>
-
-      {/* Avatars - Much more visible now */}
-      {avatars.map(avatar => (
-        <Avatar
-          key={avatar.id}
-          position={avatar.position}
-          color={avatar.color}
-          name={avatar.name}
-          isTalking={avatar.talking}
-        />
-      ))}
-
-      {/* Controls */}
       <OrbitControls
-        enableDamping={true}
-        enableZoom={true}
-        enablePan={true}
-        maxDistance={25}
-        minDistance={4}
+        enableDamping
+        enableZoom
+        enablePan
+        maxDistance={28}
+        minDistance={5}
         dampingFactor={0.05}
         rotateSpeed={0.5}
         zoomSpeed={0.5}
         panSpeed={0.5}
       />
 
-      {/* Optional helpers - uncomment for debugging */}
-      {/* <gridHelper args={[20, 20, 0x888888, 0x444444]} /> */}
-      {/* <axesHelper args={[5]} /> */}
-
-      {/* Fog for depth perception */}
       <fog attach="fog" args={[lighting.fog.color, lighting.fog.near, lighting.fog.far]} />
     </Canvas>
   );
