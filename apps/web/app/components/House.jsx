@@ -5,7 +5,6 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { ROOMS, WALL_HEIGHT, WALL_THICKNESS, getOuterWalls } from './roomLayout';
 
-
 // ---- Material palette: warm "reality-TV set" rather than flat brown-everywhere ----
 const PALETTE = {
   wallWarm: '#c9a876',      // clay/taupe interior walls
@@ -238,13 +237,9 @@ function Furniture() {
 
 // Builds the exterior shell + interior partition walls from ROOMS config.
 // Doors are simply gaps left in the partition walls (no geometry needed there).
+// Builds the exterior shell + interior partition walls from ROOMS config.
+// Doors are simply gaps left in the partition walls (no geometry needed there).
 function HouseShell() {
-  const { minX, maxX, minZ, maxZ } = getOuterWalls();
-  const shellWidth = maxX - minX;
-  const shellDepth = maxZ - minZ;
-  const cx = (minX + maxX) / 2;
-  const cz = (minZ + maxZ) / 2;
-
   return (
     <group>
       {/* Floors per room */}
@@ -252,22 +247,48 @@ function HouseShell() {
         room.isGlassBooth ? null : <RoomFloor key={key} room={room} />
       )}
 
-      {/* Ceiling (skip over the glass booth + outdoor area so light can reach them) */}
-      <mesh position={[cx - 2, WALL_HEIGHT, cz - 5.5]} rotation={[Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[shellWidth - 5, 10]} />
+      {/* Ceiling, split to match the two indoor rows (bedroom/bathroom row
+          and kitchen/living row). The diary booth and backyard are left
+          open on top intentionally. */}
+      <mesh position={[-3, WALL_HEIGHT, -5]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[10, 5]} />
+        <meshStandardMaterial color={PALETTE.ceiling} roughness={0.95} />
+      </mesh>
+      <mesh position={[0.5, WALL_HEIGHT, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[15, 5]} />
         <meshStandardMaterial color={PALETTE.ceiling} roughness={0.95} />
       </mesh>
 
-      {/* Exterior shell walls (skip the back/yard-facing side so the yard reads as open-air) */}
-      <Wall x={cx} z={minZ - 5} length={shellWidth - 5} axis="x" color={PALETTE.wallExterior} />
-      <Wall x={minX} z={cz - 5.5} length={shellDepth - 5} axis="z" color={PALETTE.wallExterior} />
-      <Wall x={maxX - 5} z={cz - 5.5} length={shellDepth - 5} axis="z" color={PALETTE.wallExterior} />
+      {/* ---- Exterior shell ---- */}
+      {/* North wall, bedroom + bathroom row only. The diary room's north
+          side is its own glass wall (see DiaryBooth) — stopping at x=2
+          avoids a solid wall slicing through the glass booth. */}
+      <Wall x={-3} z={-7.5} length={10} axis="x" color={PALETTE.wallExterior} />
 
-      {/* Interior partitions, with door gaps left as intentional breaks */}
-      {/* Bedroom / Bathroom divider */}
-      <Wall x={-2} z={-7.4} length={5} axis="z" color={PALETTE.wallWarm} />
-      {/* Bathroom / Diary booth divider (solid, since booth's own glass starts here) */}
-      <Wall x={2} z={-6.5} length={3} axis="z" color={PALETTE.wallWarm} />
+      {/* West wall, bedroom row — x=-8 is the bedroom's real west edge */}
+      <Wall x={-8} z={-5} length={5} axis="z" color={PALETTE.wallExterior} />
+      {/* West wall, kitchen/living row — x=-7 is the kitchen's real west edge */}
+      <Wall x={-7} z={0} length={5} axis="z" color={PALETTE.wallExterior} />
+      {/* Short step wall closing the gap where the west edge jumps from
+          x=-8 (bedroom) to x=-7 (kitchen) */}
+      <Wall x={-7.5} z={-2.5} length={1} axis="x" color={PALETTE.wallExterior} />
+
+      {/* East wall, kitchen/living row — x=8 is the living room's real east
+          edge. The diary booth's east edge (x=7) is glass, already handled
+          by DiaryBooth — this used to incorrectly cut through it at x=3. */}
+      <Wall x={8} z={0} length={5} axis="z" color={PALETTE.wallExterior} />
+
+      {/* South side of the kitchen/living row is intentionally left open —
+          reads as a patio/yard rather than an enclosed room. */}
+
+      {/* ---- Interior partitions, with door gaps left as intentional breaks ---- */}
+      {/* Bedroom / Bathroom divider — full room depth (was centered on the
+          wrong z and only covered a sliver of the boundary) */}
+      <Wall x={-2} z={-5} length={5} axis="z" color={PALETTE.wallWarm} />
+      {/* Bathroom / Diary booth divider (solid on the bathroom side, set
+          just off the diary's own glass plane to avoid z-fighting) — full
+          room depth, was previously only 3 units long */}
+      <Wall x={1.95} z={-5} length={5} axis="z" color={PALETTE.wallWarm} />
       {/* Bedroom+Bathroom block / Kitchen+Living divider, with a doorway gap left open */}
       <Wall x={-6.5} z={-2.5} length={5} axis="x" color={PALETTE.wallWarm} />
       <Wall x={2.5} z={-2.5} length={4} axis="x" color={PALETTE.wallWarm} />
@@ -276,20 +297,19 @@ function HouseShell() {
     </group>
   );
 }
-
-export default function House({ timeOfDay = 'day', occupants = {}, children = null }) {
+export default function House({ timeOfDay = 'day', occupants = {}, children }) {
   const isDiaryOccupied = (occupants.diary_room || []).length > 0;
 
   const getLighting = (time) => {
     switch (time) {
       case 'day':
-        return { ambient: 0.55, directional: { intensity: 1.0, color: '#fff3e0' }, fog: { color: '#cfe0ea', near: 14, far: 32 } };
+        return { ambient: 0.55, directional: { intensity: 1.0, color: '#fff3e0' }, fog: { color: '#cfe0ea', near: 24, far: 55 } };
       case 'evening':
-        return { ambient: 0.32, directional: { intensity: 0.55, color: '#ffab73' }, fog: { color: '#caa07a', near: 13, far: 28 } };
+        return { ambient: 0.32, directional: { intensity: 0.55, color: '#ffab73' }, fog: { color: '#caa07a', near: 22, far: 48 } };
       case 'night':
-        return { ambient: 0.14, directional: { intensity: 0.12, color: '#5566aa' }, fog: { color: '#0d0f22', near: 12, far: 26 } };
+        return { ambient: 0.14, directional: { intensity: 0.12, color: '#5566aa' }, fog: { color: '#0d0f22', near: 20, far: 42 } };
       default:
-        return { ambient: 0.5, directional: { intensity: 0.8, color: '#ffffff' }, fog: { color: '#ffffff', near: 10, far: 30 } };
+        return { ambient: 0.5, directional: { intensity: 0.8, color: '#ffffff' }, fog: { color: '#ffffff', near: 20, far: 50 } };
     }
   };
   const lighting = getLighting(timeOfDay);

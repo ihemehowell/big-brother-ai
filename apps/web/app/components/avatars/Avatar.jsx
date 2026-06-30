@@ -80,7 +80,7 @@ export default function Avatar({ contestant, isSpeaking = false }) {
 
     switch (animationState) {
       case 'idle':
-        groupRef.current.position.y = pos.y + 0.005 * Math.abs(Math.sin(elapsed * 2));
+        groupRef.current.position.y = pos.y + 0.1 + 0.005 * Math.abs(Math.sin(elapsed * 2));
         break;
       case 'talking':
         if (headGroupRef.current) {
@@ -115,7 +115,7 @@ export default function Avatar({ contestant, isSpeaking = false }) {
   });
 
   return (
-    <group ref={groupRef} position={[pos.x, pos.y, pos.z]}>
+    <group ref={groupRef} position={[pos.x, pos.y + 0.1, pos.z]}>
       {/* Feet */}
       <mesh position={[-0.2, 0, 0]}>
         <boxGeometry args={[0.3, 0.2, 0.5]} />
@@ -149,24 +149,18 @@ export default function Avatar({ contestant, isSpeaking = false }) {
       </mesh>
 
       {/* Head group — all children below use small LOCAL offsets from this
-          group's origin (0,0,0), not absolute world coordinates. The original
-          version placed eyes/nose/mouth at world-scale y-values like 2.3 while
-          nested inside a group already positioned at y=2.25, which would have
-          rendered the face far above the actual head. */}
+          group's origin (0,0,0), not absolute world coordinates. */}
       <group ref={headGroupRef} position={[0, 2.25, 0]}>
-        {/* Head */}
         <mesh>
           <sphereGeometry args={[0.25, 24, 24]} />
           <meshStandardMaterial color={colors.skin} />
         </mesh>
 
-        {/* Hair */}
         <mesh position={[0, 0.15, 0]}>
           <sphereGeometry args={[0.28, 16, 16]} />
           <meshStandardMaterial color={colors.hair} />
         </mesh>
 
-        {/* Eyes (whites + pupils), small local offsets from head center */}
         <mesh position={[-0.08, 0.03, 0.2]}>
           <sphereGeometry args={[0.05, 8, 8]} />
           <meshStandardMaterial color="#ffffff" />
@@ -184,13 +178,11 @@ export default function Avatar({ contestant, isSpeaking = false }) {
           <meshStandardMaterial color="#000000" />
         </mesh>
 
-        {/* Nose */}
         <mesh position={[0, -0.05, 0.25]}>
           <boxGeometry args={[0.08, 0.08, 0.1]} />
           <meshStandardMaterial color={colors.skin} />
         </mesh>
 
-        {/* Mouth */}
         <mesh ref={mouthRef} position={[0, -0.1, 0.25]} scale={[0.15, 0.5, 0.15]}>
           <boxGeometry args={[0.15, 0.1, 0.15]} />
           <meshStandardMaterial color="#aa3333" />
@@ -207,8 +199,8 @@ export default function Avatar({ contestant, isSpeaking = false }) {
         <meshStandardMaterial color={colors.shirt} />
       </mesh>
 
-      {/* Name tag — real readable text via drei, with a backing plate for contrast */}
-      <group position={[0, 2.65, 0]}>
+      {/* Name tag */}
+      <group position={[0, 2.85, 0]}>
         <mesh>
           <planeGeometry args={[0.7, 0.22]} />
           <meshBasicMaterial color="#000000" opacity={0.45} transparent />
@@ -225,35 +217,39 @@ export default function Avatar({ contestant, isSpeaking = false }) {
         </Text>
       </group>
 
-      {/* Speech bubble when speaking */}
-      {isSpeaking && (
-        <group position={[0, 2.95, 0.35]}>
-          <mesh>
-            {/* sphereGeometry's 2nd/3rd args are segment counts (integers >= 3),
-                not dimensions — the original "0.25, 0.25" here was invalid/degenerate. */}
-            <sphereGeometry args={[0.18, 12, 12]} />
-            <meshStandardMaterial color="#ffffcc" opacity={0.9} transparent />
-          </mesh>
-          {/* Speech bubble tail — rotation belongs on the mesh, not in the geometry args */}
-          <mesh position={[0, -0.2, 0]} rotation={[Math.PI, 0, 0]}>
-            <coneGeometry args={[0.06, 0.12, 4]} />
-            <meshStandardMaterial color="#ffffcc" opacity={0.9} transparent />
-          </mesh>
-        </group>
-      )}
+      {/* Speech bubble + caption — gated by isSpeaking */}
+      {isSpeaking && contestant.dialogue && (
+        <>
+          <group position={[0, 2.95, 0.35]}>
+            <mesh>
+              <sphereGeometry args={[0.18, 12, 12]} />
+              <meshStandardMaterial color="#ffffcc" opacity={0.9} transparent />
+            </mesh>
+            <mesh position={[0, -0.2, 0]} rotation={[Math.PI, 0, 0]}>
+              <coneGeometry args={[0.06, 0.12, 4]} />
+              <meshStandardMaterial color="#ffffcc" opacity={0.9} transparent />
+            </mesh>
+          </group>
 
-      {contestant.dialogue && (
-        <Text
-          position={[0, 3.2, 0]}
-          fontSize={0.1}
-          color="#fffacc"
-          anchorX="center"
-          anchorY="middle"
-          maxWidth={2}
-          textAlign="center"
-        >
-          {contestant.dialogue}
-        </Text>
+          <group position={[0, 3.25, 0]}>
+            <mesh position={[0, 0, -0.01]}>
+              <planeGeometry args={[Math.min(2.2, 0.1 * contestant.dialogue.length + 0.3), 0.32]} />
+              <meshBasicMaterial color="#1a1410" opacity={0.75} transparent />
+            </mesh>
+            <Text
+              fontSize={0.11}
+              color="#fff8e0"
+              anchorX="center"
+              anchorY="middle"
+              maxWidth={2}
+              textAlign="center"
+              outlineWidth={0.006}
+              outlineColor="#000000"
+            >
+              {contestant.dialogue}
+            </Text>
+          </group>
+        </>
       )}
     </group>
   );

@@ -1,4 +1,4 @@
-import House from './components/House';
+import WorldState from './components/WorldState';
 import DiaryRoom from './components/DiaryRoom';
 import RelationshipGraph from './components/RelationshipGraph';
 import VotingPanel from './components/VotingPanel';
@@ -8,10 +8,11 @@ import HouseMap from './components/HouseMap';
 export default function Home() {
   return (
     <div className="flex h-screen w-screen relative overflow-hidden">
-      {/* 3D House View */}
+      {/* 3D House View — WorldState owns the Canvas, fetches live contestant
+          data via useWebSocket, and renders House + Avatar together. */}
       <div className="flex-1 relative">
         <div className="w-full h-full">
-          <House />
+          <WorldState />
         </div>
       </div>
 

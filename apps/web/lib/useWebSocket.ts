@@ -1,8 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { getPositionForRoom, clearRoomSlot, resetSlots } from '@/app/components/roomLayout';
+import { useEffect, useState } from 'react';
 
 interface ContestantState {
   id: string;
   name: string;
+  room: string;
   position: { x: number; y: number; z: number };
   animation: 'idle' | 'walking' | 'talking' | 'flirting';
   dialogue?: string;
@@ -13,14 +15,14 @@ interface WorldStateMessage {
   payload: any;
 }
 
+const DEFAULT_ROOM = 'living_room';
+
 export const useWebSocket = () => {
   const [contestants, setContestants] = useState<Record<string, ContestantState>>({});
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState<Array<{ type: string; payload: any; timestamp: number }>>([]);
 
   useEffect(() => {
-    // Use environment variable for WebSocket URL, fallback to localhost
-    // In Next.js, we need to use process.env for client-side env vars with NEXT_PUBLIC_ prefix
     const wsUrl = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_WS_URL) ||
                   `ws://${window.location.hostname}:4000/ws`;
     const ws = new WebSocket(wsUrl);
@@ -34,8 +36,6 @@ export const useWebSocket = () => {
       try {
         const data = JSON.parse(event.data) as WorldStateMessage;
         setMessages(prev => [...prev, { ...data, timestamp: Date.now() }]);
-
-        // Handle different message types
         handleWebSocketMessage(data);
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
@@ -44,7 +44,6 @@ export const useWebSocket = () => {
 
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
-      // Try to extract more useful error information
       if (error instanceof ErrorEvent) {
         console.error('WebSocket error details:', error.message);
       } else if (typeof error === 'object' && error !== null) {
@@ -58,7 +57,6 @@ export const useWebSocket = () => {
       setIsConnected(false);
     };
 
-    // Cleanup on unmount
     return () => {
       ws.close();
     };
@@ -67,18 +65,16 @@ export const useWebSocket = () => {
   const handleWebSocketMessage = (message: WorldStateMessage) => {
     switch (message.type) {
       case 'contestants_update':
-        // Update all contestants state
         if (Array.isArray(message.payload)) {
+          resetSlots();
           const contestantsObj: Record<string, ContestantState> = {};
           message.payload.forEach((contestant: any) => {
+            const room = contestant.room || DEFAULT_ROOM;
             contestantsObj[contestant.id] = {
               id: contestant.id,
               name: contestant.name || `Contestant ${contestant.id}`,
-              position: {
-                x: contestant.position?.x || 0,
-                y: contestant.position?.y || 0,
-                z: contestant.position?.z || 0
-              },
+              room,
+              position: getPositionForRoom(room, contestant.id),
               animation: contestant.animation || 'idle',
               dialogue: contestant.dialogue
             };
@@ -88,71 +84,138 @@ export const useWebSocket = () => {
         break;
 
       case 'agent_move':
-        // Update specific contestant position
         if (message.payload && message.payload.contestantId) {
-          setContestants(prev => ({
-            ...prev,
-            [message.payload.contestantId]: {
-              ...(prev[message.payload.contestantId] || {
-                id: message.payload.contestantId,
-                name: `Contestant ${message.payload.contestantId}`,
-                position: { x: 0, y: 0, z: 0 },
-                animation: 'idle'
-              }),
-              position: {
-                x: message.payload.x || 0,
-                y: message.payload.y || 0,
-                z: message.payload.z || 0
-              }
+          const { contestantId, room } = message.payload;
+          const resolvedRoom = room || DEFAULT_ROOM;
+          setContestants(prev => {
+            const existing = prev[contestantId];
+            if (existing && existing.room && existing.room !== resolvedRoom) {
+              clearRoomSlot(existing.room, contestantId);
             }
-          }));
+            return {
+              ...prev,
+              [contestantId]: {
+                ...(existing || {
+                  id: contestantId,
+                  name: `Contestant ${contestantId}`,
+                  room: resolvedRoom,
+                  position: { x: 0, y: 0, z: 0 },
+                  animation: 'idle'
+                }),
+                room: resolvedRoom,
+                position: getPositionForRoom(resolvedRoom, contestantId)
+              }
+            };
+          });
         }
         break;
 
       case 'agent_animation':
-        // Update specific contestant animation
         if (message.payload && message.payload.contestantId) {
-          setContestants(prev => ({
-            ...prev,
-            [message.payload.contestantId]: {
-              ...(prev[message.payload.contestantId] || {
-                id: message.payload.contestantId,
-                name: `Contestant ${message.payload.contestantId}`,
-                position: { x: 0, y: 0, z: 0 },
-                animation: 'idle'
-              }),
-              animation: message.payload.animation
-            }
-          }));
+          const { contestantId } = message.payload;
+          setContestants(prev => {
+            const existing = prev[contestantId];
+            const room = existing?.room || DEFAULT_ROOM;
+            return {
+              ...prev,
+              [contestantId]: {
+                ...(existing || {
+                  id: contestantId,
+                  name: `Contestant ${contestantId}`,
+                  room,
+                  position: getPositionForRoom(room, contestantId),
+                  animation: 'idle'
+                }),
+                animation: message.payload.animation
+              }
+            };
+          });
         }
         break;
 
       case 'dialogue':
-        // Update specific contestant dialogue
         if (message.payload && message.payload.contestantId) {
-          setContestants(prev => ({
-            ...prev,
-            [message.payload.contestantId]: {
-              ...(prev[message.payload.contestantId] || {
-                id: message.payload.contestantId,
-                name: `Contestant ${message.payload.contestantId}`,
-                position: { x: 0, y: 0, z: 0 },
-                animation: 'idle'
-              }),
-              dialogue: message.payload.content
-            }
-          }));
+          const { contestantId } = message.payload;
+          setContestants(prev => {
+            const existing = prev[contestantId];
+            const room = existing?.room || DEFAULT_ROOM;
+            return {
+              ...prev,
+              [contestantId]: {
+                ...(existing || {
+                  id: contestantId,
+                  name: `Contestant ${contestantId}`,
+                  room,
+                  position: getPositionForRoom(room, contestantId),
+                  animation: 'idle'
+                }),
+                dialogue: message.payload.content
+              }
+            };
+          });
         }
         break;
 
       case 'scene_cut':
-        // This could be used to highlight active speakers or change camera focus
-        console.log('Scene cut:', message.payload);
+        // The director graph never sends agent_move — scene_cut is the
+        // event that actually carries where a scene is happening. Move
+        // every participant into that room so the house visually reflects
+        // active scenes.
+        if (message.payload && Array.isArray(message.payload.participantIds)) {
+          const { location, participantIds } = message.payload;
+          const resolvedRoom = location || DEFAULT_ROOM;
+          setContestants(prev => {
+            const next = { ...prev };
+            for (const contestantId of participantIds) {
+              const existing = next[contestantId];
+              if (existing && existing.room && existing.room !== resolvedRoom) {
+                clearRoomSlot(existing.room, contestantId);
+              }
+              next[contestantId] = {
+                ...(existing || {
+                  id: contestantId,
+                  name: `Contestant ${contestantId}`,
+                  room: resolvedRoom,
+                  position: { x: 0, y: 0, z: 0 },
+                  animation: 'idle'
+                }),
+                room: resolvedRoom,
+                position: getPositionForRoom(resolvedRoom, contestantId),
+                animation: 'walking'
+              };
+            }
+            return next;
+          });
+        }
         break;
 
       case 'diary_room':
-        // This could be used to show diary room entries
-        console.log('Diary room entry:', message.payload);
+        // A diary pull is also a room change (into diary_room) that was
+        // previously only logged, never reflected visually.
+        if (message.payload && message.payload.contestantId) {
+          const { contestantId } = message.payload;
+          setContestants(prev => {
+            const existing = prev[contestantId];
+            if (existing && existing.room && existing.room !== 'diary_room') {
+              clearRoomSlot(existing.room, contestantId);
+            }
+            return {
+              ...prev,
+              [contestantId]: {
+                ...(existing || {
+                  id: contestantId,
+                  name: `Contestant ${contestantId}`,
+                  room: 'diary_room',
+                  position: { x: 0, y: 0, z: 0 },
+                  animation: 'idle'
+                }),
+                room: 'diary_room',
+                position: getPositionForRoom('diary_room', contestantId),
+                dialogue: message.payload.content
+              }
+            };
+          });
+        }
         break;
 
       default:

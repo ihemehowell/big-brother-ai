@@ -84,6 +84,9 @@ export function getPositionForRoom(roomKey, contestantId) {
   const slots = ROOM_SLOTS[roomKey] || ROOM_SLOTS.living_room;
 
   if (!room) {
+    if (typeof window !== 'undefined') {
+      console.warn(`[roomLayout] Unknown room key "${roomKey}" for contestant ${contestantId}. Known keys: ${Object.keys(ROOMS).join(', ')}. Falling back to (0,0,0).`);
+    }
     return { x: 0, y: 0, z: 0 };
   }
 
@@ -101,6 +104,15 @@ export function clearRoomSlot(roomKey, contestantId) {
   if (usedSlots[roomKey]) {
     delete usedSlots[roomKey][contestantId];
   }
+}
+
+// Wipe all slot assignments. Call this when a fresh full roster arrives
+// (contestants_update) so a reconnect/resync can't inherit stale slot
+// indices left behind by contestants who moved rooms without ever
+// triggering clearRoomSlot — that drift is what eventually causes two
+// different contestants to land on the same slot in a room.
+export function resetSlots() {
+  Object.keys(usedSlots).forEach(key => delete usedSlots[key]);
 }
 
 // Derive wall segments from room adjacency. Each entry is a wall plane:

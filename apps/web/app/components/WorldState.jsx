@@ -3,8 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useWebSocket } from '@/lib/useWebSocket';
 import House from './House';
-import Avatar from './Avatar';
-import { getPositionForRoom } from './roomLayout';
+import Avatar from './avatars/Avatar';
 
 // Cycle through day -> evening -> night to match House's lighting moods.
 // (This was previously a fake simulation living inside House.jsx; it's a
@@ -13,7 +12,7 @@ import { getPositionForRoom } from './roomLayout';
 const TIME_CYCLE_MS = 180000; // 3 minutes
 
 const WorldState = () => {
-  const { contestants, isConnected } = useWebSocket();
+  const { contestants } = useWebSocket();
   const [timeOfDay, setTimeOfDay] = useState('day');
   const [speakingId, setSpeakingId] = useState(null);
 
@@ -37,19 +36,9 @@ const WorldState = () => {
     }
   }, [contestants]);
 
-  // Resolve each contestant's 3D position from their room assignment.
-  // This is the bridge between the WebSocket's room-key data model and
-  // the actual coordinates House.jsx renders geometry at.
-  const placedContestants = useMemo(() => {
-    return Object.values(contestants).map(contestant => {
-      const room = contestant.room || contestant.location || 'living_room';
-      const pos = getPositionForRoom(room, contestant.id);
-      return {
-        ...contestant,
-        position: pos,
-      };
-    });
-  }, [contestants]);
+  // Position is already resolved (room -> x/y/z) inside useWebSocket via the
+  // same roomLayout House uses, so we just need the list of contestants here.
+  const placedContestants = useMemo(() => Object.values(contestants), [contestants]);
 
   // Group occupants by room so House can react to occupancy
   // (currently used for the diary room glow).
@@ -64,35 +53,21 @@ const WorldState = () => {
   }, [contestants]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <div
-        style={{
-          position: 'absolute',
-          top: 16,
-          left: 16,
-          zIndex: 10,
-          background: 'rgba(20,16,12,0.72)',
-          color: '#f2ede3',
-          padding: '10px 14px',
-          borderRadius: 8,
-          fontFamily: 'monospace',
-          fontSize: 13,
-          lineHeight: 1.5,
-          pointerEvents: 'none',
-        }}
-      >
-        <div>{isConnected ? '● connected' : '○ disconnected'} · {timeOfDay}</div>
-        <div>{Object.keys(contestants).length} contestants</div>
-      </div>
-
+    <div style={{ position: 'relative', width: '100%', height: '100%', minHeight: '100vh' }}>
       <House timeOfDay={timeOfDay} occupants={occupants}>
-        {placedContestants.map(contestant => (
-          <Avatar
-            key={contestant.id}
-            contestant={contestant}
-            isSpeaking={speakingId === contestant.id}
-          />
-        ))}
+        {placedContestants.map((contestant, i) => {
+          if (!contestant.id) {
+            console.warn('[WorldState] Contestant missing id, skipping avatar render:', contestant);
+            return null;
+          }
+          return (
+            <Avatar
+              key={contestant.id}
+              contestant={contestant}
+              isSpeaking={speakingId === contestant.id}
+            />
+          );
+        })}
       </House>
     </div>
   );
